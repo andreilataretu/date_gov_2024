@@ -7,10 +7,10 @@ from pathlib import Path
 
 # ───────── Config Streamlit ─────────
 st.set_page_config(
-    page_title="Căutare firme după CUI (Drive + local + enrich)",
+    page_title="Căutare firme după CUI + denumire & forma juridică",
     layout="wide",
 )
-st.title("🔎 Căutare firme după CUI + denumire & forma juridică")
+st.title("🔎 Căutare firme după CUI + enrich CKAN")
 
 # ───────── Funcții de lookup CKAN ─────────
 @st.cache_data(show_spinner=False)
@@ -18,106 +18,95 @@ def get_registry_csv_url() -> str:
     pkg_id   = "a03a00da-2fed-4607-97f1-5147c3ff32a6"
     res_id   = "8a535477-4b41-413e-845f-8b6afdb2d664"
     meta_url = "https://data.gov.ro/api/3/action/package_show"
-    res = requests.get(meta_url, params={"id": pkg_id}).json()["result"]
-    return next(r["url"] for r in res["resources"] if r["id"] == res_id)
+    r = requests.get(meta_url, params={"id": pkg_id}).json()["result"]
+    return next(rsrc["url"] for rsrc in r["resources"] if rsrc["id"] == res_id)
 
 @st.cache_data(show_spinner=False)
-def lookup_company(cui: str) -> tuple[str | None, str | None]:
-    """
-    Parcurge CSV-ul registrului pe chunks și returnează
-    (Denumire, FormaJur) pentru CUI. Dacă nu găsește, returnează (None,None).
-    """
+def lookup_company(cui: str) -> tuple[str|None, str|None]:
     url  = get_registry_csv_url()
     cols = ["CUI", "DENUMIRE", "FORMA_JURIDICA"]
-    for chunk in pd.read_csv(
-        url, usecols=cols, dtype=str, chunksize=100_000, low_memory=False
-    ):
-        hit = chunk.loc[chunk["CUI"].str.strip() == cui.strip()]
+    for chunk in pd.read_csv(url, usecols=cols,
+                             dtype=str, chunksize=100_000,
+                             low_memory=False):
+        hit = chunk.loc[chunk["CUI"].str.strip()==cui.strip()]
         if not hit.empty:
             return hit.iloc[0]["DENUMIRE"], hit.iloc[0]["FORMA_JURIDICA"]
     return None, None
 
-# ───────── Descărcare & încărcare CSV mare din Drive ─────────
+# ───────── Drive download + load ─────────
 DRIVE_ID_LARGE   = "1xfyW-Y8JhpGG2lTP6YcdC6kHuk7DBz3A"
 DOWNLOAD_URL     = "https://docs.google.com/uc?export=download"
-LOCAL_LARGE_PATH = Path(__file__).parent / "data" / "web_uu_an2024_convertit.csv"
+LOCAL_LARGE_PATH = Path(__file__).parent/"data"/"web_uu_an2024_convertit.csv"
 
-def get_confirm_token(response):
-    for k,v in response.cookies.items():
+def _get_token(resp):
+    for k,v in resp.cookies.items():
         if k.startswith("download_warning"):
             return v
     return None
 
-def download_file_from_google_drive(file_id: str, destination: Path):
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    sess = requests.Session()
-    res  = sess.get(DOWNLOAD_URL, params={"id": file_id}, stream=True)
-    token = get_confirm_token(res)
-    if token:
-        res = sess.get(DOWNLOAD_URL, params={"id": file_id, "confirm": token}, stream=True)
-    with open(destination, "wb") as f:
-        for chunk in res.iter_content(32768):
+def download_drive(f_id: str, dst: Path):
+    dst.parent.mkdir(exist_ok=True, parents=True)
+    s = requests.Session()
+    r = s.get(DOWNLOAD_URL, params={"id":f_id}, stream=True)
+    tok = _get_token(r)
+    if tok:
+        r = s.get(DOWNLOAD_URL, params={"id":f_id,"confirm":tok}, stream=True)
+    with open(dst, "wb") as f:
+        for chunk in r.iter_content(32768):
             if chunk:
                 f.write(chunk)
 
 @st.cache_data(show_spinner=True)
 def load_large_csv() -> pd.DataFrame:
     if not LOCAL_LARGE_PATH.exists():
-        st.info("🔄 Descarc fișierul mare de pe Drive…")
-        download_file_from_google_drive(DRIVE_ID_LARGE, LOCAL_LARGE_PATH)
+        st.info("🔄 Descarc fișier mare de pe Drive…")
+        download_drive(DRIVE_ID_LARGE, LOCAL_LARGE_PATH)
     return pd.read_csv(LOCAL_LARGE_PATH, dtype=str, low_memory=False)
 
-# ───────── Încarcare date locale ─────────
+# ───────── Load local data ─────────
 df_large = load_large_csv()
-st.info(f"✔️ Mare: {df_large.shape[0]} rânduri × {df_large.shape[1]} coloane")
+st.info(f"✔️ Mare: {df_large.shape[0]}×{df_large.shape[1]}")
 
-DATA_DIR = Path(__file__).parent / "data"
-small_fp = DATA_DIR / "web_bl_bs_sl_an2024_convertit.csv"
+data_dir = Path(__file__).parent/"data"
+small_fp = data_dir/"web_bl_bs_sl_an2024_convertit.csv"
 if small_fp.exists():
     df_small = pd.read_csv(small_fp, dtype=str, low_memory=False)
-    st.info(f"✔️ Mic:  {df_small.shape[0]} rânduri × {df_small.shape[1]} coloane")
+    st.info(f"✔️ Mic:  {df_small.shape[0]}×{df_small.shape[1]}")
     df = pd.concat([df_large, df_small], ignore_index=True)
 else:
-    st.warning("Fișierul mic lipsește, lucrez doar cu cel mare.")
+    st.warning("⚠️ Fișier mic lipsește, lucrez doar cu cel mare.")
     df = df_large
 
-st.success(f"✅ Total local: {df.shape[0]} rânduri × {df.shape[1]} coloane")
+st.success(f"✅ Total local: {df.shape[0]}×{df.shape[1]}")
 
-# ───────── Verific CUI ─────────
+# ───────── Verific că există CUI ─────────
 if "CUI" not in df.columns:
-    st.error("Nu există coloana 'CUI' în date. Verifică header-ele!")
+    st.error("❗ Coloana 'CUI' nu există în date.")
     st.stop()
 
 # ───────── Căutare + enrich ─────────
-cui   = st.text_input("🔍 Introdu CUI (sau fragment)", "")
-exact = st.checkbox("Exact match", value=False)
+cui_input = st.text_input("🔍 Introdu CUI (sau fragment)", "")
+exact     = st.checkbox("Exact match", value=False)
 
-if cui:
-    # filtrare locală
+if cui_input:
     if exact:
-        mask = df["CUI"].str.strip().eq(cui.strip(), na=False)
+        mask = df["CUI"].str.strip().eq(cui_input.strip(), na=False)
     else:
-        mask = df["CUI"].str.contains(cui.strip(), na=False)
+        mask = df["CUI"].str.contains(cui_input.strip(), na=False)
 
-    # extrag rezultate și pregătesc îmbogățirea
     res = df.loc[mask].copy()
-
     if res.empty:
-        st.warning("Nicio firmă găsită local cu acest CUI.")
+        st.warning("Nicio firmă găsită local.")
     else:
-        # inițializez coloanele noi
+        # adaug coloanele noi
         res["Denumire"] = "-"
         res["FormaJur"] = "-"
-        # pentru fiecare rând găsit, fac lookup în registru
-        for idx, row in res.iterrows():
-            den, frm = lookup_company(row["CUI"])
-            if den:
-                res.at[idx, "Denumire"] = den
-            if frm:
-                res.at[idx, "FormaJur"] = frm
+        for idx,row in res.iterrows():
+            name, form = lookup_company(row["CUI"])
+            if name: res.at[idx,"Denumire"] = name
+            if form: res.at[idx,"FormaJur"] = form
 
-        # afișez rezultatul îmbogățit
         st.write(f"**{len(res)}** firme găsite și îmbogățite:")
         st.dataframe(res.reset_index(drop=True))
 else:
-    st.info("Introdu un CUI pentru a căuta…")
+    st.info("Introdu un CUI pentru căutare…")
