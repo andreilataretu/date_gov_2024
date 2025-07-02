@@ -16,10 +16,19 @@ def get_registry_csv_url() -> str:
     return next(rs["url"] for rs in r["resources"] if rs["id"] == res_id)
 
 @st.cache_data(show_spinner=False)
-def lookup_company(cui: str) -> tuple[str|None,str|None]:
+def lookup_company(cui: str) -> tuple[str|None, str|None]:
     url = get_registry_csv_url()
-    cols = ["CUI","DENUMIRE","FORMA_JURIDICA"]
-    for chunk in pd.read_csv(url, usecols=cols, dtype=str, chunksize=100_000, low_memory=False):
+    # majoritatea CSV-urilor ONRC folosesc „;” ca separator
+    chunker = pd.read_csv(
+        url,
+        sep=";",
+        engine="python",
+        usecols=["CUI","DENUMIRE","FORMA_JURIDICA"],
+        dtype=str,
+        chunksize=100_000,
+        low_memory=False,
+    )
+    for chunk in chunker:
         hit = chunk.loc[chunk["CUI"].str.strip()==cui.strip()]
         if not hit.empty:
             return hit.iloc[0]["DENUMIRE"], hit.iloc[0]["FORMA_JURIDICA"]
@@ -105,7 +114,7 @@ if cui:
         st.dataframe(res.reset_index(drop=True))
 
         # ——— începe secțiunea de enrich ca text ———
-        st.markdown("**📋 Detalii îmbogățite (nume și formă juridică):**")
+        st.markdown("**📋 Detalii îmbogățite (Denumire și Formă juridică):**")
         for cui_val in res["CUI"].tolist():
             den, frm = lookup_company(cui_val)
             den_text = den or "N/A"
