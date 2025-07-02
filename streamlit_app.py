@@ -104,25 +104,13 @@ if cui:
         st.write(f"**{len(res)}** firme găsite:")
         st.dataframe(res.reset_index(drop=True))
 
-        # ——— începe secțiunea de enrich și tabelul mic ———
-        # pregătesc lista de (Denumire, FormaJur)
-        rows = []
+        # ——— începe secțiunea de enrich ca text ———
+        st.markdown("**📋 Detalii îmbogățite (nume și formă juridică):**")
         for cui_val in res["CUI"].tolist():
             den, frm = lookup_company(cui_val)
-            rows.append({
-                "CUI": cui_val,
-                "Denumire": den or "-",
-                "FormaJur": frm or "-"
-            })
-
-        df_enriched = pd.DataFrame(rows)
-
-        st.write("### 📋 Detalii îmbogățite (nume și formă juridică)")
-        st.dataframe(
-            df_enriched,
-            use_container_width=True,
-            height=200
-        )
-        # ——— sfârșit tabel enrich ———
+            den_text = den or "N/A"
+            frm_text = frm or "N/A"
+            st.write(f"- **CUI:** {cui_val} → **Denumire:** {den_text}, **Formă juridică:** {frm_text}")
+        # ——— sfârșit enrich ———
 else:
     st.info("Introdu un CUI pentru a căuta…")
