@@ -107,28 +107,34 @@ if "CUI" not in df.columns:
 
 # —————————————————————————————————————————————
 # 4) Căutare după CUI
-cui = st.text_input("🔍 Introdu CUI (sau fragment)", "")
+cui   = st.text_input("🔍 Introdu CUI (sau fragment)", "")
 exact = st.checkbox("Exact match", value=False)
+
 if cui:
+    # Determinăm masca locală
     if exact:
         mask = df["CUI"].str.strip().eq(cui.strip(), na=False)
     else:
         mask = df["CUI"].str.contains(cui.strip(), na=False)
-    res = df[mask]
-    if not res.empty:
-    # ─── îmbogăţire pentru fiecare CUI găsit ───
-    res = res.copy()
-    res["Denumire"] = "-"
-    res["FormaJur"]  = "-"
-    for idx, row in res.iterrows():
-        den, form = lookup_company(row["CUI"])
-        if den:  res.at[idx, "Denumire"] = den
-        if form: res.at[idx, "FormaJur"] = form
 
-    st.write(f"**{len(res)}** firme găsite și îmbogățite:")
-    st.dataframe(res.reset_index(drop=True))
+    # Aplicăm masca și clonăm sub-DataFrame-ul rezultat
+    res = df.loc[mask].copy()
 
+    if res.empty:
+        st.warning("Nicio firmă găsită local cu acest CUI.")
     else:
-        st.warning("Niciuna nu corespunde.")
+        # Enrich: adăugăm coloanele noi
+        res["Denumire"] = "-"
+        res["FormaJur"]  = "-"
+        for idx, row in res.iterrows():
+            den, frm = lookup_company(row["CUI"])
+            if den:
+                res.at[idx, "Denumire"] = den
+            if frm:
+                res.at[idx, "FormaJur"] = frm
+
+        st.write(f"**{len(res)}** firme găsite și îmbogățite:")
+        st.dataframe(res.reset_index(drop=True))
+
 else:
-    st.info("Introdu un CUI pentru a căuta…")
+    st.info("Introdu un CUI pentru căutare…")
