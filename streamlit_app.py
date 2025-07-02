@@ -75,18 +75,44 @@ if "CUI" not in df.columns:
 
 # —————————————————————————————————————————————
 # 4) Căutare după CUI
-cui = st.text_input("🔍 Introdu CUI (sau fragment)", "")
+cui   = st.text_input("🔍 Introdu CUI (sau fragment)", "")
 exact = st.checkbox("Exact match", value=False)
+
 if cui:
+    # filtrare locală
     if exact:
         mask = df["CUI"].str.strip().eq(cui.strip(), na=False)
     else:
         mask = df["CUI"].str.contains(cui.strip(), na=False)
-    res = df[mask]
-    if not res.empty:
+
+    res = df.loc[mask].copy()
+
+    if res.empty:
+        st.warning("Nicio firmă găsită local cu acest CUI.")
+    else:
+        # afișez întâi toate coloanele originale
         st.write(f"**{len(res)}** firme găsite:")
         st.dataframe(res.reset_index(drop=True))
-    else:
-        st.warning("Niciuna nu corespunde.")
+
+        # ——— începe secțiunea de enrich și tabelul mic ———
+        # pregătesc lista de (Denumire, FormaJur)
+        rows = []
+        for cui_val in res["CUI"].tolist():
+            den, frm = lookup_company(cui_val)
+            rows.append({
+                "CUI": cui_val,
+                "Denumire": den or "-",
+                "FormaJur": frm or "-"
+            })
+
+        df_enriched = pd.DataFrame(rows)
+
+        st.write("### 📋 Detalii îmbogățite (nume și formă juridică)")
+        st.dataframe(
+            df_enriched,
+            use_container_width=True,
+            height=200
+        )
+        # ——— sfârșit tabel enrich ———
 else:
     st.info("Introdu un CUI pentru a căuta…")
