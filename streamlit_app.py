@@ -5,33 +5,33 @@ import pandas as pd
 import requests
 from pathlib import Path
 
+@st.cache_data(show_spinner=False)
+def get_registry_csv_url() -> str:
+    pkg_id   = "a03a00da-2fed-4607-97f1-5147c3ff32a6"
+    res_id   = "8a535477-4b41-413e-845f-8b6afdb2d664"
+    r = requests.get(
+        "https://data.gov.ro/api/3/action/package_show",
+        params={"id": pkg_id}
+    ).json()["result"]
+    return next(rs["url"] for rs in r["resources"] if rs["id"] == res_id)
+
+@st.cache_data(show_spinner=False)
+def lookup_company(cui: str) -> tuple[str|None,str|None]:
+    url = get_registry_csv_url()
+    cols = ["CUI","DENUMIRE","FORMA_JURIDICA"]
+    for chunk in pd.read_csv(url, usecols=cols, dtype=str, chunksize=100_000, low_memory=False):
+        hit = chunk.loc[chunk["CUI"].str.strip()==cui.strip()]
+        if not hit.empty:
+            return hit.iloc[0]["DENUMIRE"], hit.iloc[0]["FORMA_JURIDICA"]
+    return None, None
+
+
 # ───────── Config Streamlit ─────────
 st.set_page_config(
     page_title="Căutare firme după CUI + denumire & forma juridică",
     layout="wide",
 )
 st.title("🔎 Căutare firme după CUI + enrich CKAN")
-
-# ───────── Funcții de lookup CKAN ─────────
-@st.cache_data(show_spinner=False)
-def get_registry_csv_url() -> str:
-    pkg_id   = "a03a00da-2fed-4607-97f1-5147c3ff32a6"
-    res_id   = "8a535477-4b41-413e-845f-8b6afdb2d664"
-    meta_url = "https://data.gov.ro/api/3/action/package_show"
-    r = requests.get(meta_url, params={"id": pkg_id}).json()["result"]
-    return next(rsrc["url"] for rsrc in r["resources"] if rsrc["id"] == res_id)
-
-@st.cache_data(show_spinner=False)
-def lookup_company(cui: str) -> tuple[str|None, str|None]:
-    url  = get_registry_csv_url()
-    cols = ["CUI", "DENUMIRE", "FORMA_JURIDICA"]
-    for chunk in pd.read_csv(url, usecols=cols,
-                             dtype=str, chunksize=100_000,
-                             low_memory=False):
-        hit = chunk.loc[chunk["CUI"].str.strip()==cui.strip()]
-        if not hit.empty:
-            return hit.iloc[0]["DENUMIRE"], hit.iloc[0]["FORMA_JURIDICA"]
-    return None, None
 
 # ───────── Drive download + load ─────────
 DRIVE_ID_LARGE   = "1xfyW-Y8JhpGG2lTP6YcdC6kHuk7DBz3A"
@@ -85,28 +85,35 @@ if "CUI" not in df.columns:
     st.stop()
 
 # ───────── Căutare + enrich ─────────
-cui_input = st.text_input("🔍 Introdu CUI (sau fragment)", "")
-exact     = st.checkbox("Exact match", value=False)
+cui = st.text_input("🔍 Introdu CUI (sau fragment)", "")
+exact = st.checkbox("Exact match", value=False)
 
-if cui_input:
+if cui:
+    # 1) filtrare locală
     if exact:
-        mask = df["CUI"].str.strip().eq(cui_input.strip(), na=False)
+        mask = df["CUI"].str.strip().eq(cui.strip(), na=False)
     else:
-        mask = df["CUI"].str.contains(cui_input.strip(), na=False)
+        mask = df["CUI"].str.contains(cui.strip(), na=False)
 
+    # 2) extrag și clonez subsetul
     res = df.loc[mask].copy()
-    if res.empty:
-        st.warning("Nicio firmă găsită local.")
-    else:
-        # adaug coloanele noi
-        res["Denumire"] = "-"
-        res["FormaJur"] = "-"
-        for idx,row in res.iterrows():
-            name, form = lookup_company(row["CUI"])
-            if name: res.at[idx,"Denumire"] = name
-            if form: res.at[idx,"FormaJur"] = form
 
+    if res.empty:
+        st.warning("Nicio firmă găsită local cu acest CUI.")
+    else:
+        # 3) adaug coloanele noi cu valori implicite
+        res["Denumire"] = "-"
+        res["FormaJur"]  = "-"
+        # 4) pentru fiecare rând, completez denumire și forma
+        for idx, row in res.iterrows():
+            den, frm = lookup_company(row["CUI"])
+            if den:
+                res.at[idx, "Denumire"] = den
+            if frm:
+                res.at[idx, "FormaJur"] = frm
+
+        # 5) afișez rezultatul îmbogățit
         st.write(f"**{len(res)}** firme găsite și îmbogățite:")
         st.dataframe(res.reset_index(drop=True))
 else:
-    st.info("Introdu un CUI pentru căutare…")
+    st.info("Introdu un CUI pentru a căuta…")
