@@ -5,6 +5,38 @@ import pandas as pd
 import requests
 from pathlib import Path
 
+# ─────────── Adaugă după celelalte importuri ───────────
+@st.cache_data(show_spinner=False)
+def get_registry_csv_url() -> str:
+    """Returnează URL-ul CSV-ului mare din CKAN."""
+    pkg_id   = "a03a00da-2fed-4607-97f1-5147c3ff32a6"
+    res_id   = "8a535477-4b41-413e-845f-8b6afdb2d664"
+    meta_url = "https://data.gov.ro/api/3/action/package_show"
+    r = requests.get(meta_url, params={"id": pkg_id}).json()["result"]
+    return next(rsrc["url"] for rsrc in r["resources"] if rsrc["id"] == res_id)
+
+@st.cache_data(show_spinner=False)
+def lookup_company(cui: str) -> tuple[str | None, str | None]:
+    """
+    Parcurge CSV-ul oficial pe bucăți și returnează
+    (Denumire, FormaJur) pentru CUI-ul dat, sau (None,None).
+    """
+    url  = get_registry_csv_url()
+    cols = ["CUI", "DENUMIRE", "FORMA_JURIDICA"]
+    for chunk in pd.read_csv(
+        url,
+        usecols=cols,
+        dtype=str,
+        chunksize=100_000,
+        low_memory=False
+    ):
+        hit = chunk.loc[chunk["CUI"].str.strip() == cui.strip()]
+        if not hit.empty:
+            return hit.iloc[0]["DENUMIRE"], hit.iloc[0]["FORMA_JURIDICA"]
+    return None, None
+# ───────────────────────────────────────────────────────
+
+
 st.set_page_config(
     page_title="Căutare firme după CUI (Drive + local)",
     layout="wide",
@@ -84,8 +116,18 @@ if cui:
         mask = df["CUI"].str.contains(cui.strip(), na=False)
     res = df[mask]
     if not res.empty:
-        st.write(f"**{len(res)}** firme găsite:")
-        st.dataframe(res.reset_index(drop=True))
+    # ─── îmbogăţire pentru fiecare CUI găsit ───
+    res = res.copy()
+    res["Denumire"] = "-"
+    res["FormaJur"]  = "-"
+    for idx, row in res.iterrows():
+        den, form = lookup_company(row["CUI"])
+        if den:  res.at[idx, "Denumire"] = den
+        if form: res.at[idx, "FormaJur"] = form
+
+    st.write(f"**{len(res)}** firme găsite și îmbogățite:")
+    st.dataframe(res.reset_index(drop=True))
+
     else:
         st.warning("Niciuna nu corespunde.")
 else:
