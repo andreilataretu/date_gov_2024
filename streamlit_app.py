@@ -17,34 +17,33 @@ def get_registry_csv_url() -> str:
 
 @st.cache_data(show_spinner=False)
 def lookup_company(cui: str) -> tuple[str|None, str|None]:
--    url  = get_registry_csv_url()
--    cols = ["CUI", "DENUMIRE", "FORMA_JURIDICA"]
--    for chunk in pd.read_csv(
--        url, usecols=cols, dtype=str, chunksize=100_000, low_memory=False
--    ):
-+    url   = get_registry_csv_url()
-+    cols  = ["CUI", "DENUMIRE", "FORMA_JURIDICA"]
-+    try:
-+        reader = pd.read_csv(
-+            url,
-+            sep=";",               # multe CSV-uri de la ONRC sunt delimitate cu “;”
-+            engine="python",
-+            usecols=cols,
-+            dtype=str,
-+            chunksize=100_000,
-+            low_memory=False
-+        )
-+    except Exception as e:
-+        # Afișăm eroarea în UI o singură dată și ieșim silențios
-+        st.error(f"Eroare la încărcarea registrului: {e}")
-+        return None, None
-+
-+    # dacă am ajuns aici, reader e un TextFileReader valid
-+    for chunk in reader:
-         hit = chunk.loc[chunk["CUI"].str.strip() == cui.strip()]
-         if not hit.empty:
-             return hit.iloc[0]["DENUMIRE"], hit.iloc[0]["FORMA_JURIDICA"]
-     return None, None
+    """
+    Parcurge CSV-ul registrului pe chunks și returnează
+    (Denumire, FormaJur) pentru CUI-ul dat, sau (None,None).
+    """
+    url = get_registry_csv_url()
+    cols = ["CUI", "DENUMIRE", "FORMA_JURIDICA"]
+    try:
+        reader = pd.read_csv(
+            url,
+            sep=";",               # separatorul folosit de CSV-ul oficial
+            engine="python",
+            usecols=cols,
+            dtype=str,
+            chunksize=100_000,
+            low_memory=False
+        )
+    except Exception as e:
+        st.error(f"Eroare la încărcarea registrului: {e}")
+        return None, None
+
+    for chunk in reader:
+        hit = chunk.loc[chunk["CUI"].str.strip() == cui.strip()]
+        if not hit.empty:
+            return hit.iloc[0]["DENUMIRE"], hit.iloc[0]["FORMA_JURIDICA"]
+
+    return None, None
+
 
 # ───────── Config Streamlit ─────────
 st.set_page_config(
